@@ -22,7 +22,7 @@
 #define HREF_GPIO_NUM     7
 #define PCLK_GPIO_NUM     13
 
-// ========== TFT 引脚 ==========
+// ========== TFT 引脚（XYTFT2.0 SLCM VER1.0, ST7789） ==========
 #define TFT_CS   45
 #define TFT_DC   48
 #define TFT_RST  21
@@ -32,14 +32,14 @@
 
 // ========== 按钮 ==========
 #define BTN_S1   0    // 拍照
-#define BTN_S2   3    // 开始/停止录像
+#define BTN_S2   3    // 录像
 
 // ========== SD 卡（1-bit 模式） ==========
 #define SD_CLK   39
 #define SD_CMD   38
 #define SD_D0    40
 
-// ========== 屏幕驱动 ==========
+// ========== 屏幕驱动（ST7789，竖屏 240x320） ==========
 class LGFX : public lgfx::LGFX_Device {
   lgfx::Panel_ST7789 _panel_instance;
   lgfx::Bus_SPI      _bus_instance;
@@ -101,7 +101,7 @@ void backlight(bool on) {
     pinMode(TFT_BL, OUTPUT);
     digitalWrite(TFT_BL, HIGH);
   } else {
-    pinMode(TFT_BL, INPUT);  // 高阻态，彻底让出 GPIO 38
+    pinMode(TFT_BL, INPUT);  // 高阻态，让出 GPIO 38
   }
 }
 
@@ -128,7 +128,7 @@ bool initCamera() {
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size   = FRAMESIZE_QVGA;  // 320x240
+  config.frame_size   = FRAMESIZE_QVGA;   // 320x240
   config.jpeg_quality = 12;
   config.fb_count     = 2;
   config.fb_location  = CAMERA_FB_IN_PSRAM;
@@ -183,7 +183,7 @@ bool capturePhoto() {
   return ok;
 }
 
-// ========== 显示状态条 ==========
+// ========== 状态条 ==========
 void drawStatus() {
   tft.fillRect(0, tft.height() - 22, tft.width(), 22, TFT_BLACK);
   tft.setTextColor(recording ? TFT_RED : TFT_GREEN, TFT_BLACK);
@@ -202,37 +202,29 @@ void enterDisplayMode() {
 }
 
 void doPhoto() {
-  // 关背光 → 释放 GPIO38
   backlight(false);
   delay(50);
-
   if (mountSD()) {
     capturePhoto();
     unmountSD();
   } else {
     Serial.println("SD not available, photo skipped");
   }
-
   delay(100);
   backlight(true);
-
-  // 清空残留帧
   camera_fb_t *dummy = esp_camera_fb_get();
   if (dummy) esp_camera_fb_return(dummy);
-
   drawStatus();
 }
 
 void startRecord() {
   backlight(false);
   delay(50);
-
   if (!mountSD()) {
     Serial.println("SD mount failed, cannot record");
     backlight(true);
     return;
   }
-
   char path[64];
   snprintf(path, sizeof(path), "/VIDEO_%03d.mjpeg", ++videoCounter);
   videoFile = SD_MMC.open(path, FILE_WRITE);
@@ -253,10 +245,8 @@ void stopRecord() {
   unmountSD();
   delay(100);
   backlight(true);
-
   camera_fb_t *dummy = esp_camera_fb_get();
   if (dummy) esp_camera_fb_return(dummy);
-
   enterDisplayMode();
   Serial.println("[MODE] RECORD stopped");
 }
@@ -269,7 +259,7 @@ void setup() {
 
   backlight(true);
   tft.init();
-  tft.setRotation(1);
+  tft.setRotation(0);      // 竖屏（如果上下颠倒改成 2）
   tft.setSwapBytes(true);
   tft.fillScreen(TFT_BLACK);
 
@@ -302,7 +292,14 @@ void loop() {
   if (currentMode == MODE_DISPLAY) {
     camera_fb_t *fb = esp_camera_fb_get();
     if (fb) {
-      tft.drawJpg(fb->buf, fb->len, 0, 0);
+      // 竖屏 240x320，摄像头 QVGA 320x240
+      // 旋转90度显示，或者居中缩放
+      // 这里用居中显示：x=(240-320)/2 负值，直接画在 (0,40) 让它居中
+      int x = (tft.width()  - fb->width)  / 2;
+      int y = (tft.height() - fb->height) / 2;
+      if (x < 0) x = 0;
+      if (y < 0) y = 0;
+      tft.drawJpg(fb->buf, fb->len, x, y);
       esp_camera_fb_return(fb);
     }
     delay(30);
@@ -312,6 +309,6 @@ void loop() {
       if (videoFile) videoFile.write(fb->buf, fb->len);
       esp_camera_fb_return(fb);
     }
-    delay(50);  // 约 20 FPS
+    delay(50);
   }
 }
